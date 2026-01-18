@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	v1 "github.com/pojntfx/htorrent/pkg/api/http/v1"
@@ -23,6 +24,12 @@ const (
 	apiPasswordFlag  = "api-password"
 	oidcIssuerFlag   = "oidc-issuer"
 	oidcClientIDFlag = "oidc-client-id"
+	// New flags
+	maxPeersFlag     = "max-peers"
+	dhtFlag          = "dht"
+	upnpFlag         = "upnp"
+	protocolsFlag    = "protocols"
+	downloadDirFlag  = "download-dir"
 )
 
 var gatewayCmd = &cobra.Command{
@@ -53,24 +60,36 @@ var gatewayCmd = &cobra.Command{
 			addr.Port = p
 		}
 
+		// Parse protocols from comma-separated string to slice
+		protocolsStr := viper.GetString(protocolsFlag)
+		var protocols []string
+		if protocolsStr != "" {
+			protocols = strings.Split(protocolsStr, ",")
+			for i, p := range protocols {
+				protocols[i] = strings.TrimSpace(p)
+			}
+		}
+
 		gateway := server.NewGateway(
 			addr.String(),
-			viper.GetString(storageFlag),
-			viper.GetString(apiUsernameFlag),
-			viper.GetString(apiPasswordFlag),
-			viper.GetString(oidcIssuerFlag),
-			viper.GetString(oidcClientIDFlag),
-			viper.GetInt(verboseFlag) > 5,
-			func(torrentMetrics v1.TorrentMetrics, fileMetrics v1.FileMetrics) {
-				log.Debug().
-					Str("magnet", torrentMetrics.Magnet).
-					Int("peers", torrentMetrics.Peers).
-					Str("path", fileMetrics.Path).
-					Int64("length", fileMetrics.Length).
-					Int64("completed", fileMetrics.Completed).
-					Msg("Streaming")
-			},
-			ctx,
+					     viper.GetString(storageFlag),
+					     viper.GetInt(verboseFlag) > 5,
+					     // New parameters
+					     viper.GetInt(maxPeersFlag),
+					     viper.GetBool(dhtFlag),
+					     viper.GetBool(upnpFlag),
+					     protocols,
+			       viper.GetString(downloadDirFlag),
+					     func(torrentMetrics v1.TorrentMetrics, fileMetrics v1.FileMetrics) {
+						     log.Debug().
+						     Str("magnet", torrentMetrics.Magnet).
+						     Int("peers", torrentMetrics.Peers).
+						     Str("path", fileMetrics.Path).
+						     Int64("length", fileMetrics.Length).
+						     Int64("completed", fileMetrics.Completed).
+						     Msg("Streaming")
+					     },
+			       ctx,
 		)
 
 		if err := gateway.Open(); err != nil {
@@ -102,8 +121,8 @@ var gatewayCmd = &cobra.Command{
 		}()
 
 		log.Info().
-			Str("address", addr.String()).
-			Msg("Listening")
+		Str("address", addr.String()).
+		Msg("Listening")
 
 		return gateway.Wait()
 	},
@@ -121,6 +140,13 @@ func init() {
 	gatewayCmd.PersistentFlags().String(apiPasswordFlag, "", "Password for the management API (can also be set using the API_PASSWORD env variable). Ignored if any of the OIDC parameters are set.")
 	gatewayCmd.PersistentFlags().String(oidcIssuerFlag, "", "OIDC Issuer (i.e. https://pojntfx.eu.auth0.com/) (can also be set using the OIDC_ISSUER env variable)")
 	gatewayCmd.PersistentFlags().String(oidcClientIDFlag, "", "OIDC Client ID (i.e. myoidcclientid) (can also be set using the OIDC_CLIENT_ID env variable)")
+
+	// New flags
+	gatewayCmd.PersistentFlags().IntP(maxPeersFlag, "m", 50, "Maximum number of peers to connect to")
+	gatewayCmd.PersistentFlags().BoolP(dhtFlag, "d", true, "Enable DHT (Distributed Hash Table)")
+	gatewayCmd.PersistentFlags().BoolP(upnpFlag, "u", true, "Enable UPnP port forwarding on router")
+	gatewayCmd.PersistentFlags().StringP(protocolsFlag, "p", "tcp,utp", "Comma-separated list of protocols to use (tcp, utp)")
+	gatewayCmd.PersistentFlags().StringP(downloadDirFlag, "o", "", "Directory to download torrents to (defaults to storage directory if not specified)")
 
 	viper.AutomaticEnv()
 
